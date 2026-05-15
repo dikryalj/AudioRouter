@@ -2,6 +2,9 @@
 
 AudioRouter adalah aplikasi berbasis web (Single-Page Application) yang memungkinkan pengguna untuk mengalirkan audio dari satu sumber ke dua atau lebih perangkat output (seperti headset atau speaker Bluetooth) secara bersamaan. Alat ini dilengkapi dengan fitur kalibrasi latency untuk menyinkronkan suara antar perangkat yang berbeda.
 
+## Demo
+https://audio-router-app.vercel.app/ [Hanya bisa pada Laptop]
+
 ## 🚀 Fitur Utama
 
 - **Multi-Output Routing**: Alirkan audio ke berbagai perangkat Bluetooth sekaligus langsung dari browser.
