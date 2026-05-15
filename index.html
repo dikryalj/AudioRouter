@@ -1,0 +1,1578 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AudioRouter — Multi-Device Audio Splitter</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Space Mono (monospace utility feel) + Syne (display) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+
+  <script>
+    // Tailwind dark mode config
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Syne', 'sans-serif'],
+            mono: ['Space Mono', 'monospace'],
+          },
+          colors: {
+            surface: {
+              950: '#080b10',
+              900: '#0d1117',
+              800: '#161b24',
+              700: '#1e2533',
+              600: '#272f41',
+            },
+            accent: {
+              DEFAULT: '#00e5ff',
+              dim:     '#00b8cc',
+              glow:    'rgba(0,229,255,0.15)',
+            },
+            warn: '#ff6b35',
+            ok:   '#39d98a',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* ── Global resets & base ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      background-color: #080b10;
+      font-family: 'Space Mono', monospace;
+      min-height: 100vh;
+      /* Subtle grid texture */
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* ── Scrollbar ────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #272f41; border-radius: 3px; }
+
+    /* ── Glow text ────────────────────────────────────────────── */
+    .text-glow {
+      text-shadow: 0 0 20px rgba(0,229,255,0.6), 0 0 40px rgba(0,229,255,0.3);
+    }
+
+    /* ── Card border shimmer ──────────────────────────────────── */
+    .card {
+      background: #0d1117;
+      border: 1px solid #1e2533;
+      border-radius: 12px;
+      transition: border-color 0.25s, box-shadow 0.25s;
+    }
+    .card:hover { border-color: #272f41; }
+    .card.active-route {
+      border-color: rgba(0,229,255,0.45);
+      box-shadow: 0 0 20px rgba(0,229,255,0.08), inset 0 0 20px rgba(0,229,255,0.04);
+    }
+
+    /* ── Custom range input ───────────────────────────────────── */
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: #1e2533;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #00e5ff;
+      box-shadow: 0 0 8px rgba(0,229,255,0.7);
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.25); }
+    input[type=range].warn-range::-webkit-slider-thumb { background: #ff6b35; box-shadow: 0 0 8px rgba(255,107,53,0.7); }
+
+    /* ── Toggle switch ────────────────────────────────────────── */
+    .toggle { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      width: 44px; height: 24px;
+      background: #1e2533;
+      border-radius: 12px;
+      transition: background 0.25s;
+      position: relative;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #272f41;
+      transition: transform 0.25s, background 0.25s;
+    }
+    .toggle input:checked ~ .toggle-track { background: rgba(0,229,255,0.2); border: 1px solid rgba(0,229,255,0.5); }
+    .toggle input:checked ~ .toggle-track::after {
+      background: #00e5ff;
+      transform: translateX(20px);
+      box-shadow: 0 0 8px rgba(0,229,255,0.8);
+    }
+
+    /* ── Play button ──────────────────────────────────────────── */
+    #btn-play {
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.15s;
+    }
+    #btn-play::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(0,229,255,0.2) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #btn-play:hover::before { opacity: 1; }
+    #btn-play:active { transform: scale(0.95); }
+
+    /* ── Progress bar ─────────────────────────────────────────── */
+    #progress-bar {
+      -webkit-appearance: none;
+      width: 100%; height: 3px;
+      border-radius: 2px;
+      background: #1e2533;
+      outline: none;
+      cursor: pointer;
+    }
+    #progress-bar::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: #00e5ff;
+      box-shadow: 0 0 6px rgba(0,229,255,0.8);
+    }
+
+    /* ── Visualiser canvas ────────────────────────────────────── */
+    #visualiser {
+      image-rendering: pixelated;
+    }
+
+    /* ── Pulse dot ────────────────────────────────────────────── */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.75); }
+    }
+    .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+    /* ── Status badge ─────────────────────────────────────────── */
+    .status-ok   { color: #39d98a; }
+    .status-warn { color: #ff6b35; }
+    .status-info { color: #00e5ff; }
+
+    /* ── Fade-in animation for device cards ───────────────────── */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .device-card { animation: fadeSlideIn 0.3s ease forwards; }
+
+    /* ── Tooltip ──────────────────────────────────────────────── */
+    [data-tip] { position: relative; }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #161b24;
+      border: 1px solid #272f41;
+      color: #8899aa;
+      font-size: 11px;
+      white-space: nowrap;
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 50;
+    }
+    [data-tip]:hover::after { opacity: 1; }
+
+    /* ══════════════════════════════════════════════════════════════
+       NEW: DROP ZONE STYLES
+       The drop zone uses CSS transitions to react to drag events.
+       The .drag-over class is toggled via JS on dragenter/dragleave.
+    ══════════════════════════════════════════════════════════════ */
+    #drop-zone {
+      border: 2px dashed #1e2533;
+      border-radius: 10px;
+      transition:
+        border-color 0.2s ease,
+        background-color 0.2s ease,
+        box-shadow 0.2s ease;
+      cursor: pointer;
+    }
+
+    /* Hover state — subtle feedback on mouse-over */
+    #drop-zone:hover {
+      border-color: rgba(0,229,255,0.35);
+      background-color: rgba(0,229,255,0.03);
+    }
+
+    /* Drag-over state — file is being dragged over the zone */
+    #drop-zone.drag-over {
+      border-color: #00e5ff;
+      background-color: rgba(0,229,255,0.07);
+      box-shadow: 0 0 24px rgba(0,229,255,0.12), inset 0 0 24px rgba(0,229,255,0.04);
+    }
+
+    /* Loaded state — file has been successfully loaded */
+    #drop-zone.file-loaded {
+      border-color: rgba(57,217,138,0.5);
+      background-color: rgba(57,217,138,0.04);
+    }
+
+    /* ── Source tab buttons ───────────────────────────────────── */
+    .source-tab {
+      padding: 6px 14px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.18s;
+      font-family: 'Space Mono', monospace;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .source-tab.active {
+      background: rgba(0,229,255,0.12);
+      border-color: rgba(0,229,255,0.4);
+      color: #00e5ff;
+    }
+    .source-tab:not(.active) {
+      background: transparent;
+      border-color: #1e2533;
+      color: #475569;
+    }
+    .source-tab:not(.active):hover {
+      border-color: #272f41;
+      color: #94a3b8;
+    }
+
+    /* ── Tab panels ───────────────────────────────────────────── */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── URL validation states ────────────────────────────────── */
+    #url-input.url-valid   { border-color: rgba(57,217,138,0.5); }
+    #url-input.url-invalid { border-color: rgba(255,107,53,0.5); }
+
+    /* ── File name display ────────────────────────────────────── */
+    #file-name-display {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+  </style>
+</head>
+
+<body class="text-slate-300 antialiased">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       HEADER
+  ═══════════════════════════════════════════════════════════════ -->
+  <header class="sticky top-0 z-40 border-b border-surface-700 backdrop-blur-md bg-surface-950/80">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <!-- Logo icon -->
+        <svg class="w-7 h-7 text-accent" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="14" cy="14" r="13" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M7 14 Q10 8 14 14 Q18 20 21 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          <circle cx="7"  cy="14" r="2" fill="currentColor"/>
+          <circle cx="21" cy="14" r="2" fill="currentColor"/>
+        </svg>
+        <span class="font-display text-xl font-bold text-white tracking-tight">Audio<span class="text-accent text-glow">Router</span></span>
+      </div>
+
+      <div class="flex items-center gap-3 text-xs text-slate-500">
+        <span id="ctx-state-badge" class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-surface-600 inline-block"></span>
+          Context idle
+        </span>
+        <!-- Browser compat warning -->
+        <span id="compat-badge" class="hidden px-2 py-1 bg-warn/10 text-warn border border-warn/30 rounded text-xs">
+          ⚠ setSinkId not supported
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       MAIN LAYOUT
+  ═══════════════════════════════════════════════════════════════ -->
+  <main class="max-w-5xl mx-auto px-6 py-8 space-y-6">
+
+    <!-- ── Row 1: Source Input + Master Player ───────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- ══════════════════════════════════════════════════════
+           SOURCE INPUT PANEL (upgraded)
+           Contains two tabs:
+           1. Local File  — Drag & Drop + Browse button  [NEW]
+           2. Stream URL  — URL input with validation     [ENHANCED]
+      ══════════════════════════════════════════════════════════ -->
+      <div class="card p-5 space-y-4">
+
+        <!-- Panel header + tab switcher -->
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-display text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+            </svg>
+            Audio Source
+          </h2>
+
+          <!-- Tab switcher buttons -->
+          <div class="flex items-center gap-1" role="tablist" aria-label="Source type">
+            <button id="tab-file" class="source-tab active" role="tab" aria-selected="true"  aria-controls="panel-file" onclick="switchTab('file')">
+              📁 Local File
+            </button>
+            <button id="tab-url"  class="source-tab"        role="tab" aria-selected="false" aria-controls="panel-url"  onclick="switchTab('url')">
+              🔗 Stream URL
+            </button>
+          </div>
+        </div>
+
+        <!-- ── TAB 1: LOCAL FILE ── [NEW FEATURE] ──────────────
+             File API integration uses three mechanisms:
+             a) Drag & Drop (dragenter/dragover/dragleave/drop events)
+             b) Hidden <input type="file"> triggered by "Browse" button
+             c) URL.createObjectURL(file) feeds the blob URL into mainAudio.src
+        ──────────────────────────────────────────────────────── -->
+        <div id="panel-file" class="tab-panel active space-y-3">
+
+          <!--
+            DROP ZONE
+            ─────────
+            • dragenter  → add .drag-over class (cyan glow)
+            • dragleave  → remove .drag-over class
+            • dragover   → prevent default to allow drop
+            • drop       → prevent default, extract File, call loadLocalFile()
+            • click      → programmatically trigger the hidden file input
+          -->
+          <div
+            id="drop-zone"
+            role="button"
+            tabindex="0"
+            aria-label="Drop zone: drag and drop an MP3 or WAV file here, or press Enter to browse"
+            class="p-6 flex flex-col items-center justify-center gap-3 text-center select-none"
+          >
+            <!-- Drop icon — animates on drag-over via JS class toggle -->
+            <div id="drop-icon" class="w-12 h-12 rounded-xl bg-surface-700 flex items-center justify-center text-slate-500 transition-all duration-200">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+              </svg>
+            </div>
+
+            <!-- Primary label — swapped with file info after a file loads -->
+            <div id="drop-label" class="space-y-1">
+              <p class="text-sm text-slate-400">Drop an <span class="text-accent font-bold">MP3</span> or <span class="text-accent font-bold">WAV</span> file here</p>
+              <p class="text-xs text-slate-600">or use the button below to browse</p>
+            </div>
+
+            <!-- File name display (hidden until a file is loaded) [NEW] -->
+            <div id="file-info" class="hidden w-full px-3 py-2 bg-surface-800 rounded-lg border border-ok/30">
+              <p class="text-xs text-slate-500 mb-0.5">Loaded file</p>
+              <p id="file-name-display" class="text-sm text-ok font-bold"></p>
+              <p id="file-size-display" class="text-xs text-slate-600 mt-0.5"></p>
+            </div>
+          </div>
+
+          <!-- Browse button row -->
+          <div class="flex gap-2">
+            <!--
+              HIDDEN FILE INPUT [NEW — File API]
+              ────────────────────────────────────
+              accept="audio/*,.mp3,.wav,.ogg,.flac,.aac" restricts the
+              OS file picker to audio types. Triggered programmatically
+              by the "Browse Files" button via fileInput.click().
+            -->
+            <input
+              type="file"
+              id="file-input"
+              accept="audio/*,.mp3,.wav,.ogg,.flac,.aac"
+              class="hidden"
+              aria-hidden="true"
+            />
+
+            <button
+              id="btn-browse"
+              class="flex-1 text-xs py-2.5 px-3 bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white border border-surface-600 hover:border-accent/30 rounded-lg transition-all flex items-center justify-center gap-2"
+              data-tip="Opens your OS file explorer"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+              </svg>
+              Browse Files
+            </button>
+
+            <button
+              id="btn-sample"
+              class="flex-1 text-xs py-2.5 px-3 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 hover:border-accent/60 rounded-lg transition-all"
+              data-tip="Loads a royalty-free sample MP3 via URL"
+            >
+              🎵 Sample Song
+            </button>
+          </div>
+
+          <!-- Supported formats note -->
+          <p class="text-xs text-slate-700 leading-relaxed">
+            Supports MP3, WAV, OGG, FLAC, AAC. Files are read locally — no upload occurs.
+          </p>
+        </div>
+
+        <!-- ── TAB 2: STREAM URL ── [ENHANCED] ─────────────────
+             Keeps original URL input, adds:
+             • Real-time URL format validation
+             • "Validate & Load" button with inline feedback
+             • CORS / streaming restriction disclaimer
+        ──────────────────────────────────────────────────────── -->
+        <div id="panel-url" class="tab-panel space-y-3">
+
+          <div class="space-y-2">
+            <div class="relative">
+              <input
+                id="url-input"
+                type="url"
+                placeholder="https://example.com/audio.mp3"
+                class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600
+                       focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/30 transition-colors font-mono pr-10"
+              />
+              <!-- Inline validation icon (filled by JS) -->
+              <span id="url-valid-icon" class="absolute right-3 top-1/2 -translate-y-1/2 text-base pointer-events-none opacity-0 transition-opacity"></span>
+            </div>
+
+            <!-- URL validation feedback row [NEW] -->
+            <div id="url-feedback" class="text-xs font-mono min-h-[16px] text-slate-600"></div>
+
+            <div class="flex gap-2">
+              <button
+                id="btn-load"
+                class="flex-1 text-xs py-2.5 px-3 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 hover:border-accent/60 rounded-lg transition-all font-bold flex items-center justify-center gap-1.5"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Validate &amp; Load
+              </button>
+            </div>
+          </div>
+
+          <!-- CORS / streaming disclaimer [NEW] -->
+          <div class="rounded-lg border border-warn/20 bg-warn/5 p-3 space-y-1">
+            <p class="text-xs text-warn font-bold flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              </svg>
+              Streaming Restriction Notice
+            </p>
+            <p class="text-xs text-slate-500 leading-relaxed">
+              Streaming from <strong class="text-slate-400">YouTube</strong>, <strong class="text-slate-400">Spotify</strong>, or similar platforms directly is <strong class="text-warn">blocked by their CORS security policies</strong>. Only direct MP3/WAV/OGG links from CORS-enabled servers will work. For best results, use the <strong class="text-slate-400">Local File</strong> tab instead.
+            </p>
+          </div>
+
+          <!-- Legacy CORS note -->
+          <p class="text-xs text-slate-700 leading-relaxed">
+            <span class="text-slate-600">ℹ</span>
+            URL sources use <code class="text-accent/70">crossOrigin="anonymous"</code>. The server must send <code class="text-slate-500">Access-Control-Allow-Origin</code> headers.
+          </p>
+        </div>
+
+        <!-- Source status — shared between both tabs -->
+        <div id="source-status" class="text-xs text-slate-600 font-mono min-h-[16px] border-t border-surface-700 pt-3">
+          No source loaded.
+        </div>
+      </div>
+
+      <!-- Master Player Panel (unchanged core logic) -->
+      <div class="card p-5 space-y-4">
+        <h2 class="font-display text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
+          <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/>
+          </svg>
+          Master Controls
+        </h2>
+
+        <!-- Visualiser canvas — AnalyserNode draws here (preserved) -->
+        <canvas id="visualiser" class="w-full h-16 rounded-lg bg-surface-800" width="600" height="64"></canvas>
+
+        <!-- Progress -->
+        <div class="space-y-1">
+          <input type="range" id="progress-bar" min="0" max="100" value="0" step="0.1" />
+          <div class="flex justify-between text-xs text-slate-600 font-mono">
+            <span id="time-current">0:00</span>
+            <span id="time-total">0:00</span>
+          </div>
+        </div>
+
+        <!-- Play / Volume row -->
+        <div class="flex items-center gap-4">
+          <!-- Play/Pause button -->
+          <button id="btn-play"
+            class="w-11 h-11 flex-shrink-0 rounded-full border border-accent/40 flex items-center justify-center text-accent hover:border-accent hover:shadow-[0_0_16px_rgba(0,229,255,0.35)] transition-all">
+            <svg id="icon-play" class="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <svg id="icon-pause" class="w-5 h-5 hidden" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+            </svg>
+          </button>
+
+          <!-- Volume -->
+          <div class="flex-1 flex items-center gap-3">
+            <svg class="w-4 h-4 text-slate-500 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            </svg>
+            <input type="range" id="master-volume" min="0" max="1" step="0.01" value="0.85" class="flex-1" />
+            <span id="volume-display" class="text-xs text-slate-500 font-mono w-8 text-right">85%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 2: Device Manager ─────────────────────────────── -->
+    <div class="card p-5 space-y-4">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <h2 class="font-display text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
+          <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+          </svg>
+          Output Devices
+        </h2>
+
+        <div class="flex items-center gap-2">
+          <!-- Route all toggle -->
+          <button id="btn-route-all" class="hidden text-xs py-1.5 px-3 bg-ok/10 hover:bg-ok/20 text-ok border border-ok/30 hover:border-ok/60 rounded-lg transition-all font-bold">
+            ↔ Route All
+          </button>
+
+          <!-- Scan button -->
+          <button id="btn-scan"
+            class="text-xs py-2 px-4 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 hover:border-accent/60 rounded-lg transition-all font-bold flex items-center gap-2">
+            <svg id="scan-spinner" class="hidden w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="60" stroke-dashoffset="20"/>
+            </svg>
+            <svg id="scan-icon" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="M21 21l-4.35-4.35"/>
+            </svg>
+            Scan Audio Devices
+          </button>
+        </div>
+      </div>
+
+      <!-- Device list -->
+      <div id="device-list" class="space-y-3 min-h-[60px]">
+        <!-- Empty state -->
+        <div id="empty-state" class="flex flex-col items-center justify-center py-10 text-center space-y-2">
+          <svg class="w-10 h-10 text-surface-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+          </svg>
+          <p class="text-slate-600 text-sm">No devices detected yet.</p>
+          <p class="text-slate-700 text-xs">Click <strong class="text-slate-500">Scan Audio Devices</strong> to enumerate output devices.<br/>Your browser may prompt for microphone permission — this is required to get device labels.</p>
+        </div>
+      </div>
+
+      <!-- Log console -->
+      <div class="border-t border-surface-700 pt-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-slate-600 font-mono uppercase tracking-wider">Routing Log</span>
+          <button id="btn-clear-log" class="text-xs text-slate-700 hover:text-slate-500 transition-colors">Clear</button>
+        </div>
+        <div id="log-console"
+          class="bg-surface-800 rounded-lg p-3 h-28 overflow-y-auto font-mono text-xs space-y-0.5 border border-surface-700">
+          <div class="text-slate-600">// AudioRouter initialised. Waiting for user action…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 3: Info / How-it-works ─────────────────────────── -->
+    <details class="card px-5 py-4 group cursor-pointer select-none">
+      <summary class="font-display text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 list-none">
+        <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        How It Works — Web Audio API Architecture
+      </summary>
+      <div class="mt-4 space-y-3 text-xs text-slate-500 leading-relaxed font-mono">
+        <pre class="bg-surface-800 rounded-lg p-4 overflow-x-auto text-slate-400 text-[11px] leading-5">
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     AudioRouter Signal Flow (v2)                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  SOURCE INPUT (two modes):                                               │
+│    ┌─ Local File ─── File API → URL.createObjectURL(file) ─────────┐    │
+│    └─ Stream URL ── URL validation → crossOrigin="anonymous" ───────┘    │
+│                            │                                             │
+│                            ▼                                             │
+│  &lt;audio crossOrigin="anonymous"&gt;  (main hidden audio element)           │
+│       │   .src = blobURL  OR  remoteURL                                  │
+│       ▼                                                                  │
+│  createMediaElementSource(audioEl)  ← single AudioContext source        │
+│       │                                                                  │
+│       ├──► GainNode (master volume)                                      │
+│       │         │                                                        │
+│       │         ▼                                                        │
+│       │   AnalyserNode ──► canvas visualiser                            │
+│       │         │                                                        │
+│       │         ▼                                                        │
+│       │   AudioContext.destination  (system default output)             │
+│       │                                                                  │
+│       └── [For each checked Bluetooth device:]                          │
+│                 │                                                        │
+│                 ▼                                                        │
+│           DelayNode (0–500 ms, per-device latency calibration)          │
+│                 │                                                        │
+│                 ▼                                                        │
+│           MediaStreamAudioDestinationNode                               │
+│                 │                                                        │
+│                 ▼                                                        │
+│           new HTMLAudioElement()                                         │
+│                 │ .setSinkId(deviceId)   ← routes to BT device          │
+│                 │ .srcObject = stream                                    │
+│                 └──► 🔊 Bluetooth Speaker / Headphones                  │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘</pre>
+        <p>Each checked device gets its own independent routing chain so latency offsets never affect other routes.</p>
+        <p><span class="text-warn">⚠ Local files:</span> <code>URL.createObjectURL(file)</code> creates a temporary blob URL (<code>blob://…</code>) that is valid for the lifetime of the page. <code>crossOrigin</code> is NOT set for local files — it is only applied for remote URLs.</p>
+        <p><span class="text-warn">⚠ Browser support:</span> <code>setSinkId()</code> is supported in Chromium-based browsers (Chrome, Edge, Opera). Firefox and Safari do not support it yet. Run this app from a local file (<code>file://</code>) or a trusted HTTPS origin.</p>
+      </div>
+    </details>
+
+  </main>
+
+  <!--
+    HIDDEN MAIN AUDIO ELEMENT
+    ─────────────────────────
+    crossOrigin="anonymous" is set/unset dynamically by JS:
+    - Remote URLs: MUST have crossOrigin="anonymous" for Web Audio API
+    - Local blob URLs: crossOrigin must be REMOVED (blobs are same-origin)
+    Default is anonymous for URL tab; JS manages it per-source.
+  -->
+  <audio id="main-audio" crossorigin="anonymous" preload="metadata"></audio>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       JAVASCRIPT — AudioRouter Engine v2
+       New additions clearly marked with [FILE API] comments.
+  ═══════════════════════════════════════════════════════════════ -->
+  <script>
+  'use strict';
+
+  /* ─────────────────────────────────────────────────────────────
+     SAMPLE SONG — royalty-free, CORS-enabled MP3
+     Source: Pixabay (free for any use, CDN allows cross-origin)
+  ─────────────────────────────────────────────────────────────── */
+  const SAMPLE_URL = 'https://cdn.pixabay.com/audio/2024/11/12/audio_b9e5257649.mp3';
+
+  /* ─────────────────────────────────────────────────────────────
+     DOM REFERENCES
+  ─────────────────────────────────────────────────────────────── */
+  const $  = id => document.getElementById(id);
+
+  // Existing elements
+  const btnScan       = $('btn-scan');
+  const btnPlay       = $('btn-play');
+  const btnRouteAll   = $('btn-route-all');
+  const btnClearLog   = $('btn-clear-log');
+  const masterVolume  = $('master-volume');
+  const volumeDisplay = $('volume-display');
+  const progressBar   = $('progress-bar');
+  const timeCurrent   = $('time-current');
+  const timeTotal     = $('time-total');
+  const iconPlay      = $('icon-play');
+  const iconPause     = $('icon-pause');
+  const deviceList    = $('device-list');
+  const emptyState    = $('empty-state');
+  const logConsole    = $('log-console');
+  const visualiser    = $('visualiser');
+  const sourceStatus  = $('source-status');
+  const ctxStateBadge = $('ctx-state-badge');
+  const compatBadge   = $('compat-badge');
+  const scanSpinner   = $('scan-spinner');
+  const scanIcon      = $('scan-icon');
+  const mainAudio     = $('main-audio');
+
+  // URL tab elements
+  const urlInput      = $('url-input');
+  const btnLoad       = $('btn-load');
+  const urlFeedback   = $('url-feedback');
+  const urlValidIcon  = $('url-valid-icon');
+
+  // [FILE API] New local-file elements
+  const dropZone        = $('drop-zone');
+  const dropLabel       = $('drop-label');
+  const dropIcon        = $('drop-icon');
+  const fileInput       = $('file-input');      // hidden <input type="file">
+  const btnBrowse       = $('btn-browse');
+  const btnSample       = $('btn-sample');
+  const fileInfo        = $('file-info');        // revealed after a file loads
+  const fileNameDisplay = $('file-name-display');
+  const fileSizeDisplay = $('file-size-display');
+
+  /* ─────────────────────────────────────────────────────────────
+     [FILE API] OBJECT URL TRACKING
+     We keep a reference to the current blob URL so we can
+     call URL.revokeObjectURL() when a new file is selected,
+     preventing memory leaks.
+  ─────────────────────────────────────────────────────────────── */
+  let currentBlobUrl = null; // Tracks the active blob:// URL
+
+  /* ─────────────────────────────────────────────────────────────
+     AUDIO CONTEXT & NODE STATE
+  ─────────────────────────────────────────────────────────────── */
+  let audioCtx    = null;   // Single AudioContext (created on first user gesture)
+  let sourceNode  = null;   // MediaElementSourceNode (wraps mainAudio)
+  let gainNode    = null;   // Master gain (volume)
+  let analyser    = null;   // AnalyserNode for visualiser
+
+  /**
+   * Per-device routing state.
+   * Map<deviceId, {
+   *   delayNode: DelayNode,
+   *   destNode:  MediaStreamAudioDestinationNode,
+   *   audioEl:   HTMLAudioElement,
+   *   connected: boolean
+   * }>
+   */
+  const deviceRoutes = new Map();
+
+  /* ─────────────────────────────────────────────────────────────
+     LOGGING UTILITY
+  ─────────────────────────────────────────────────────────────── */
+  function log(msg, type = 'info') {
+    const colours = { info: 'text-slate-400', ok: 'text-ok', warn: 'text-warn', accent: 'text-accent' };
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const div = document.createElement('div');
+    div.className = colours[type] ?? colours.info;
+    div.textContent = `[${ts}] ${msg}`;
+    logConsole.appendChild(div);
+    logConsole.scrollTop = logConsole.scrollHeight;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     FORMAT TIME (seconds → m:ss)
+  ─────────────────────────────────────────────────────────────── */
+  function fmtTime(sec) {
+    if (!isFinite(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     FORMAT FILE SIZE (bytes → human-readable)
+  ─────────────────────────────────────────────────────────────── */
+  function fmtSize(bytes) {
+    if (bytes < 1024)       return bytes + ' B';
+    if (bytes < 1048576)    return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     UPDATE CONTEXT STATE BADGE
+  ─────────────────────────────────────────────────────────────── */
+  function updateCtxBadge() {
+    if (!audioCtx) {
+      ctxStateBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-surface-600 inline-block"></span> Context idle`;
+      return;
+    }
+    const state = audioCtx.state;
+    const colourMap = { running: 'bg-ok', suspended: 'bg-warn', closed: 'bg-red-500' };
+    ctxStateBadge.innerHTML = `<span class="w-2 h-2 rounded-full ${colourMap[state] ?? 'bg-slate-500'} inline-block pulse-dot"></span> Context ${state}`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     INITIALISE WEB AUDIO CONTEXT
+     Called on first user interaction to comply with autoplay policy.
+  ─────────────────────────────────────────────────────────────── */
+  function initAudioContext() {
+    if (audioCtx) return; // Already created
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    /*
+     * SOURCE NODE
+     * createMediaElementSource wraps the <audio> element so the Web Audio
+     * API can process its output. crossOrigin="anonymous" on the element
+     * is required for URL sources; local file blobs skip this.
+     */
+    sourceNode = audioCtx.createMediaElementSource(mainAudio);
+
+    /* GAIN NODE — master volume */
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = parseFloat(masterVolume.value);
+
+    /* ANALYSER NODE — for the visualiser */
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+
+    /*
+     * DEFAULT SIGNAL CHAIN (always active):
+     * sourceNode ──► gainNode ──► analyser ──► destination
+     */
+    sourceNode.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    audioCtx.onstatechange = updateCtxBadge;
+    updateCtxBadge();
+
+    log('AudioContext created. Sample rate: ' + audioCtx.sampleRate + ' Hz', 'ok');
+    log('Signal chain: Source → Gain → Analyser → Default Output', 'info');
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     [FILE API] LOAD LOCAL FILE
+     ──────────────────────────────────────────────────────────────
+     Steps:
+     1. Validate MIME type / extension on the client side.
+     2. Revoke the previous blob URL to free memory.
+     3. Create a new blob URL with URL.createObjectURL(file).
+        This returns a string like "blob://localhost/uuid…" that
+        the browser can stream without any server involvement.
+     4. IMPORTANT: Remove crossOrigin attribute — blob URLs are
+        treated as same-origin, so setting crossOrigin="anonymous"
+        on a blob would cause a CORS failure.
+     5. Feed the blob URL into mainAudio.src and call .load().
+     6. Update the drop zone UI to show the file name.
+  ─────────────────────────────────────────────────────────────── */
+  function loadLocalFile(file) {
+    // ── 1. Client-side type validation ───────────────────────
+    const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac',
+                          'audio/aac', 'audio/mp4', 'audio/x-m4a', 'audio/webm'];
+    const allowedExts  = /\.(mp3|wav|ogg|flac|aac|m4a|opus|webm)$/i;
+
+    const typeOk = allowedTypes.includes(file.type) || allowedExts.test(file.name);
+    if (!typeOk) {
+      log(`Rejected: "${file.name}" — unsupported audio format.`, 'warn');
+      sourceStatus.textContent = '✗ Unsupported file type. Please use MP3, WAV, OGG, FLAC, or AAC.';
+      sourceStatus.className   = 'text-xs text-warn font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+      return;
+    }
+
+    // ── 2. Tear down existing routes ─────────────────────────
+    tearDownAllRoutes();
+
+    // ── 3. Revoke the old blob URL to prevent memory leaks ───
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+      log('Previous blob URL revoked.', 'info');
+    }
+
+    // ── 4. Create the blob URL from the File object ──────────
+    //    URL.createObjectURL() is synchronous — no FileReader needed.
+    //    The returned URL is valid until revokeObjectURL() is called
+    //    or the page is unloaded.
+    currentBlobUrl = URL.createObjectURL(file);
+    log(`Blob URL created: ${currentBlobUrl.slice(0, 40)}…`, 'info');
+
+    // ── 5. Remove crossOrigin for local files ────────────────
+    //    Blob URLs are same-origin by definition. Setting
+    //    crossOrigin="anonymous" on a blob: URL causes the browser
+    //    to send an Origin header which blobs don't respond to,
+    //    causing a CORS error and blocking Web Audio API access.
+    mainAudio.removeAttribute('crossorigin');
+
+    // ── 6. Feed blob URL to the audio element ────────────────
+    mainAudio.src = currentBlobUrl;
+    mainAudio.load();
+
+    // ── 7. Update UI ─────────────────────────────────────────
+    sourceStatus.textContent = `Loading: ${file.name}`;
+    sourceStatus.className   = 'text-xs text-accent/70 font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+    log(`Loading local file: "${file.name}" (${fmtSize(file.size)})`, 'accent');
+
+    // Update drop zone to show file info
+    dropLabel.classList.add('hidden');
+    fileInfo.classList.remove('hidden');
+    fileNameDisplay.textContent = file.name;
+    fileSizeDisplay.textContent = fmtSize(file.size) + (file.type ? ` · ${file.type}` : '');
+    dropZone.classList.add('file-loaded');
+    dropZone.classList.remove('drag-over');
+
+    // Drop icon — swap to music note
+    dropIcon.innerHTML = `
+      <svg class="w-6 h-6 text-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+      </svg>`;
+    dropIcon.classList.add('bg-ok/10');
+    dropIcon.classList.remove('bg-surface-700');
+
+    // ── 8. Wire one-time metadata + error listeners ───────────
+    mainAudio.addEventListener('loadedmetadata', () => {
+      timeTotal.textContent = fmtTime(mainAudio.duration);
+      sourceStatus.textContent = `✓ Ready — ${file.name} — ${fmtTime(mainAudio.duration)}`;
+      sourceStatus.className = 'text-xs text-ok font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+      log(`Local file ready. Duration: ${fmtTime(mainAudio.duration)}`, 'ok');
+    }, { once: true });
+
+    mainAudio.addEventListener('error', (e) => {
+      const codes = { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK',
+                      3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' };
+      const errCode = codes[mainAudio.error?.code] ?? 'UNKNOWN';
+      sourceStatus.textContent = `✗ Playback error (${errCode})`;
+      sourceStatus.className   = 'text-xs text-warn font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+      log(`Error loading local file: ${errCode}`, 'warn');
+    }, { once: true });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     [ENHANCED] LOAD REMOTE URL SOURCE
+     Adds URL format validation before attempting to load.
+     Re-applies crossOrigin="anonymous" (removed when loading local files).
+  ─────────────────────────────────────────────────────────────── */
+  function loadSource(url) {
+    url = url.trim();
+    if (!url) { log('No URL provided.', 'warn'); return; }
+
+    // ── Validate URL format ───────────────────────────────────
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      urlFeedback.textContent = '✗ Invalid URL — must start with https:// or http://';
+      urlFeedback.className   = 'text-xs font-mono min-h-[16px] text-warn';
+      urlInput.classList.add('url-invalid');
+      urlInput.classList.remove('url-valid');
+      urlValidIcon.textContent = '✗';
+      urlValidIcon.style.color = '#ff6b35';
+      urlValidIcon.style.opacity = '1';
+      log('Invalid URL format.', 'warn');
+      return;
+    }
+
+    // ── Check for known-blocked streaming services ────────────
+    const blockedHosts = ['youtube.com', 'youtu.be', 'spotify.com', 'soundcloud.com',
+                          'tidal.com', 'deezer.com', 'music.apple.com', 'open.spotify.com'];
+    const isBlocked = blockedHosts.some(h => parsed.hostname.includes(h));
+    if (isBlocked) {
+      urlFeedback.textContent = '⚠ Streaming from this platform is blocked by CORS. Use a direct MP3 link or upload a local file.';
+      urlFeedback.className   = 'text-xs font-mono min-h-[16px] text-warn leading-relaxed';
+      urlInput.classList.add('url-invalid');
+      urlInput.classList.remove('url-valid');
+      urlValidIcon.textContent = '⚠';
+      urlValidIcon.style.color = '#ff6b35';
+      urlValidIcon.style.opacity = '1';
+      log(`Blocked: "${parsed.hostname}" — CORS-restricted streaming platform.`, 'warn');
+      return;
+    }
+
+    // ── Visual feedback: URL looks OK ─────────────────────────
+    urlFeedback.textContent = '✓ URL looks valid. Attempting to load…';
+    urlFeedback.className   = 'text-xs font-mono min-h-[16px] text-ok';
+    urlInput.classList.add('url-valid');
+    urlInput.classList.remove('url-invalid');
+    urlValidIcon.textContent = '✓';
+    urlValidIcon.style.color = '#39d98a';
+    urlValidIcon.style.opacity = '1';
+
+    // Tear down existing routes
+    tearDownAllRoutes();
+
+    // ── Re-apply crossOrigin for remote URLs ─────────────────
+    //    This was possibly removed when loading a local file.
+    //    crossOrigin="anonymous" is REQUIRED for Web Audio API
+    //    to access the decoded audio data (taint-check bypass).
+    mainAudio.setAttribute('crossorigin', 'anonymous');
+
+    // ── Revoke any leftover blob URL ─────────────────────────
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+    }
+
+    mainAudio.src = url;
+    mainAudio.load();
+
+    sourceStatus.textContent = 'Loading: ' + url;
+    sourceStatus.className   = 'text-xs text-accent/70 font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+    log('Loading source: ' + url, 'accent');
+
+    mainAudio.addEventListener('loadedmetadata', () => {
+      timeTotal.textContent = fmtTime(mainAudio.duration);
+      sourceStatus.textContent = '✓ Ready — ' + fmtTime(mainAudio.duration);
+      sourceStatus.className = 'text-xs text-ok font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+      urlFeedback.textContent = '✓ Source loaded successfully.';
+      log('Source ready. Duration: ' + fmtTime(mainAudio.duration), 'ok');
+    }, { once: true });
+
+    mainAudio.addEventListener('error', () => {
+      sourceStatus.textContent = '✗ Failed to load. Check URL or CORS policy.';
+      sourceStatus.className = 'text-xs text-warn font-mono min-h-[16px] truncate border-t border-surface-700 pt-3';
+      urlFeedback.textContent = '✗ Load failed — the server may block CORS requests. Try a direct MP3 link.';
+      urlFeedback.className   = 'text-xs font-mono min-h-[16px] text-warn leading-relaxed';
+      urlInput.classList.add('url-invalid');
+      urlInput.classList.remove('url-valid');
+      log('Error loading source. The server may block CORS requests.', 'warn');
+    }, { once: true });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     [FILE API] DRAG & DROP EVENT HANDLERS
+     ──────────────────────────────────────────────────────────────
+     Four events form the complete D&D contract:
+     • dragenter  — file enters the drop zone; add visual highlight
+     • dragover   — file is hovering; MUST preventDefault() to allow drop
+     • dragleave  — file leaves without dropping; remove highlight
+     • drop       — file released; extract File object from DataTransfer
+  ─────────────────────────────────────────────────────────────── */
+
+  // Track enter/leave depth to avoid flickering when crossing child elements
+  let dragCounter = 0;
+
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    dropZone.classList.add('drag-over');
+    dropIcon.classList.add('scale-110');
+  });
+
+  dropZone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    // Only remove highlight when pointer fully leaves the zone
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      dropZone.classList.remove('drag-over');
+      dropIcon.classList.remove('scale-110');
+    }
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    // REQUIRED: preventDefault() tells the browser this is a valid drop target
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy'; // Show copy cursor
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropZone.classList.remove('drag-over');
+    dropIcon.classList.remove('scale-110');
+
+    // DataTransfer.files is a FileList — we only handle the first file
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) {
+      log('Drop contained no files.', 'warn');
+      return;
+    }
+    if (files.length > 1) {
+      log(`Multiple files dropped — loading the first: "${files[0].name}"`, 'info');
+    }
+    loadLocalFile(files[0]);
+  });
+
+  // Allow keyboard activation of the drop zone (accessibility)
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+
+  // Clicking anywhere on the drop zone also opens the file picker
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  /* ─────────────────────────────────────────────────────────────
+     [FILE API] FILE INPUT (BROWSE BUTTON) HANDLER
+     ──────────────────────────────────────────────────────────────
+     The hidden <input type="file"> element is the OS file picker
+     trigger. When the user selects a file, its 'change' event
+     fires with the selected File in input.files[0].
+  ─────────────────────────────────────────────────────────────── */
+  btnBrowse.addEventListener('click', (e) => {
+    e.stopPropagation(); // Prevent double-trigger from drop zone click handler
+    fileInput.click();   // Programmatically open the OS file dialog
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      loadLocalFile(file);
+    }
+    // Reset the input value so the same file can be re-selected if needed
+    fileInput.value = '';
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     [NEW] TAB SWITCHER
+     Toggles between "Local File" and "Stream URL" panels.
+  ─────────────────────────────────────────────────────────────── */
+  function switchTab(which) {
+    const tabs   = { file: $('tab-file'),   url: $('tab-url')   };
+    const panels = { file: $('panel-file'), url: $('panel-url') };
+
+    Object.keys(tabs).forEach(key => {
+      const isActive = key === which;
+      tabs[key].classList.toggle('active', isActive);
+      tabs[key].setAttribute('aria-selected', String(isActive));
+      panels[key].classList.toggle('active', isActive);
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     [ENHANCED] URL INPUT — REAL-TIME VALIDATION
+     Validates the URL format as the user types and updates
+     the validation icon and feedback text inline.
+  ─────────────────────────────────────────────────────────────── */
+  urlInput.addEventListener('input', () => {
+    const val = urlInput.value.trim();
+
+    if (!val) {
+      // Empty — clear validation state
+      urlInput.classList.remove('url-valid', 'url-invalid');
+      urlValidIcon.style.opacity = '0';
+      urlFeedback.textContent = '';
+      return;
+    }
+
+    let valid = false;
+    try { valid = Boolean(new URL(val)); } catch (_) { valid = false; }
+
+    urlInput.classList.toggle('url-valid',   valid);
+    urlInput.classList.toggle('url-invalid', !valid);
+    urlValidIcon.textContent  = valid ? '✓' : '✗';
+    urlValidIcon.style.color  = valid ? '#39d98a' : '#ff6b35';
+    urlValidIcon.style.opacity = '1';
+
+    if (valid) {
+      const blockedHosts = ['youtube.com', 'youtu.be', 'spotify.com', 'soundcloud.com'];
+      const isBlocked = blockedHosts.some(h => val.includes(h));
+      urlFeedback.textContent = isBlocked
+        ? '⚠ Streaming from this platform is blocked by CORS.'
+        : '✓ URL format valid.';
+      urlFeedback.className = `text-xs font-mono min-h-[16px] ${isBlocked ? 'text-warn' : 'text-ok'}`;
+    } else {
+      urlFeedback.textContent = '✗ Invalid URL format.';
+      urlFeedback.className = 'text-xs font-mono min-h-[16px] text-warn';
+    }
+  });
+
+  urlInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadSource(urlInput.value);
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     SCAN AUDIO OUTPUT DEVICES
+     navigator.mediaDevices.enumerateDevices() returns device labels
+     only after the user grants microphone permission. We request mic
+     access briefly just to unlock the labels, then release it.
+  ─────────────────────────────────────────────────────────────── */
+  async function scanDevices() {
+    scanSpinner.classList.remove('hidden');
+    scanIcon.classList.add('hidden');
+    btnScan.disabled = true;
+
+    try {
+      log('Requesting microphone permission to unlock device labels…', 'info');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop()); // release mic immediately
+      log('Permission granted. Enumerating devices…', 'ok');
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter(d => d.kind === 'audiooutput');
+
+      log(`Found ${outputs.length} audio output device(s).`, 'ok');
+      renderDeviceList(outputs);
+
+    } catch (err) {
+      log('Permission denied or enumeration failed: ' + err.message, 'warn');
+      if (err.name === 'NotAllowedError') {
+        alert('Microphone permission is required to read device names.\nPlease allow access and try again.');
+      }
+    } finally {
+      scanSpinner.classList.add('hidden');
+      scanIcon.classList.remove('hidden');
+      btnScan.disabled = false;
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     RENDER DEVICE CARDS (unchanged)
+  ─────────────────────────────────────────────────────────────── */
+  function renderDeviceList(outputs) {
+    Array.from(deviceList.querySelectorAll('.device-card')).forEach(el => el.remove());
+
+    if (outputs.length === 0) {
+      emptyState.classList.remove('hidden');
+      btnRouteAll.classList.add('hidden');
+      return;
+    }
+
+    emptyState.classList.add('hidden');
+    btnRouteAll.classList.remove('hidden');
+
+    outputs.forEach((device, i) => {
+      const label     = device.label || `Output Device ${i + 1}`;
+      const isDefault = device.deviceId === 'default';
+
+      const card = document.createElement('div');
+      card.className = 'device-card card p-4 space-y-3';
+      card.style.animationDelay = `${i * 60}ms`;
+      card.dataset.deviceId = device.deviceId;
+
+      card.innerHTML = `
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-surface-700 flex items-center justify-center">
+              <svg class="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+              </svg>
+            </div>
+            <div class="min-w-0">
+              <div class="text-sm text-white font-semibold truncate">${label}</div>
+              <div class="text-xs text-slate-600 font-mono truncate">${device.deviceId === 'default' ? 'System Default' : device.deviceId.slice(0, 20) + '…'}</div>
+            </div>
+          </div>
+          <label class="toggle flex-shrink-0" data-tip="Route audio to this device">
+            <input type="checkbox" class="device-toggle" data-device-id="${device.deviceId}" ${isDefault ? 'disabled' : ''} />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        ${!isDefault ? `
+        <div class="latency-row space-y-1 opacity-40 pointer-events-none transition-opacity duration-300">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-slate-500 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              Latency Offset
+            </span>
+            <span class="latency-display text-slate-400 font-mono">0 ms</span>
+          </div>
+          <input type="range" class="latency-slider warn-range" min="0" max="500" step="1" value="0" data-device-id="${device.deviceId}" />
+          <div class="flex justify-between text-[10px] text-slate-700 font-mono">
+            <span>0 ms</span><span>250 ms</span><span>500 ms</span>
+          </div>
+        </div>
+        ` : `
+        <div class="text-xs text-slate-700 italic">Default output — always active via AudioContext destination.</div>
+        `}
+
+        <div class="route-status text-xs text-slate-700 font-mono flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-surface-600 inline-block route-dot"></span>
+          <span class="route-label">Not routed</span>
+        </div>
+      `;
+
+      deviceList.appendChild(card);
+
+      const toggle    = card.querySelector('.device-toggle');
+      const latRow    = card.querySelector('.latency-row');
+      const latSlider = card.querySelector('.latency-slider');
+      const latDisp   = card.querySelector('.latency-display');
+
+      toggle?.addEventListener('change', () => {
+        if (toggle.checked) enableRoute(device.deviceId, card);
+        else                 disableRoute(device.deviceId, card);
+      });
+
+      latSlider?.addEventListener('input', () => {
+        const ms = parseInt(latSlider.value, 10);
+        latDisp.textContent = `${ms} ms`;
+        const route = deviceRoutes.get(device.deviceId);
+        if (route?.delayNode) {
+          route.delayNode.delayTime.setTargetAtTime(ms / 1000, audioCtx.currentTime, 0.01);
+          log(`Latency [${label.slice(0, 20)}]: ${ms} ms`, 'info');
+        }
+      });
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ENABLE AUDIO ROUTE TO A SPECIFIC DEVICE
+     Architecture per device:
+       sourceNode → delayNode → destNode → audioEl.setSinkId(deviceId)
+  ─────────────────────────────────────────────────────────────── */
+  async function enableRoute(deviceId, card) {
+    initAudioContext();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    const label    = card.querySelector('[class*="text-white"]')?.textContent?.trim() ?? deviceId;
+    const latRow   = card.querySelector('.latency-row');
+    const routeDot = card.querySelector('.route-dot');
+    const routeLbl = card.querySelector('.route-label');
+
+    disableRoute(deviceId, card, true);
+
+    const delayNode = audioCtx.createDelay(0.51);
+    delayNode.delayTime.value = parseInt(card.querySelector('.latency-slider')?.value ?? 0, 10) / 1000;
+
+    const destNode = audioCtx.createMediaStreamDestination();
+
+    // Tap from sourceNode for parallel routing (before gain)
+    sourceNode.connect(delayNode);
+    delayNode.connect(destNode);
+
+    const audioEl = new Audio();
+    audioEl.srcObject = destNode.stream;
+
+    if (typeof audioEl.setSinkId === 'function') {
+      try {
+        await audioEl.setSinkId(deviceId);
+        log(`setSinkId OK → [${label.slice(0, 30)}]`, 'ok');
+      } catch (err) {
+        log(`setSinkId failed for [${label.slice(0, 30)}]: ${err.message}`, 'warn');
+      }
+    } else {
+      log('setSinkId() not supported in this browser. Route uses default output.', 'warn');
+      compatBadge.classList.remove('hidden');
+    }
+
+    audioEl.play().catch(e => log('Branch play() failed: ' + e.message, 'warn'));
+    deviceRoutes.set(deviceId, { delayNode, destNode, audioEl, connected: true });
+
+    card.classList.add('active-route');
+    if (latRow) latRow.classList.remove('opacity-40', 'pointer-events-none');
+
+    routeDot.className = 'w-1.5 h-1.5 rounded-full bg-ok inline-block pulse-dot route-dot';
+    routeLbl.textContent = 'Routing active';
+    routeLbl.className = 'route-label text-ok';
+
+    log(`Route enabled → [${label.slice(0, 30)}] | Delay: ${delayNode.delayTime.value * 1000 | 0} ms`, 'ok');
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DISABLE / TEAR DOWN A ROUTE
+  ─────────────────────────────────────────────────────────────── */
+  function disableRoute(deviceId, card, silent = false) {
+    const route = deviceRoutes.get(deviceId);
+    if (!route) return;
+
+    try { route.delayNode.disconnect(); } catch (_) {}
+    try { route.destNode.disconnect();  } catch (_) {}
+
+    route.audioEl.pause();
+    route.audioEl.srcObject = null;
+
+    deviceRoutes.delete(deviceId);
+
+    if (card) {
+      card.classList.remove('active-route');
+      const latRow   = card.querySelector('.latency-row');
+      const routeDot = card.querySelector('.route-dot');
+      const routeLbl = card.querySelector('.route-label');
+      if (latRow)   latRow.classList.add('opacity-40', 'pointer-events-none');
+      if (routeDot) routeDot.className = 'w-1.5 h-1.5 rounded-full bg-surface-600 inline-block route-dot';
+      if (routeLbl) { routeLbl.textContent = 'Not routed'; routeLbl.className = 'route-label text-slate-700'; }
+    }
+
+    if (!silent) log(`Route disabled → [${deviceId.slice(0, 20)}]`, 'warn');
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TEAR DOWN ALL ROUTES (called when source changes)
+  ─────────────────────────────────────────────────────────────── */
+  function tearDownAllRoutes() {
+    deviceRoutes.forEach((_, id) => {
+      const card   = deviceList.querySelector(`[data-device-id="${id}"]`);
+      const toggle = card?.querySelector('.device-toggle');
+      if (toggle) toggle.checked = false;
+      disableRoute(id, card, true);
+    });
+    log('All routes cleared (source change).', 'warn');
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     PLAY / PAUSE
+  ─────────────────────────────────────────────────────────────── */
+  async function togglePlayPause() {
+    initAudioContext();
+
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+
+    if (!mainAudio.src) {
+      log('No source loaded. Please load a file or URL first.', 'warn');
+      return;
+    }
+
+    if (mainAudio.paused) {
+      try {
+        await mainAudio.play();
+        iconPlay.classList.add('hidden');
+        iconPause.classList.remove('hidden');
+        log('Playback started.', 'ok');
+        deviceRoutes.forEach(route => route.audioEl.play().catch(() => {}));
+      } catch (e) {
+        log('play() failed: ' + e.message, 'warn');
+      }
+    } else {
+      mainAudio.pause();
+      iconPlay.classList.remove('hidden');
+      iconPause.classList.add('hidden');
+      log('Playback paused.', 'info');
+      deviceRoutes.forEach(route => route.audioEl.pause());
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     MASTER VOLUME
+  ─────────────────────────────────────────────────────────────── */
+  masterVolume.addEventListener('input', () => {
+    const v = parseFloat(masterVolume.value);
+    volumeDisplay.textContent = Math.round(v * 100) + '%';
+    if (gainNode) {
+      gainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+    }
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     PROGRESS BAR
+  ─────────────────────────────────────────────────────────────── */
+  mainAudio.addEventListener('timeupdate', () => {
+    if (!mainAudio.duration) return;
+    const pct = (mainAudio.currentTime / mainAudio.duration) * 100;
+    progressBar.value = pct;
+    timeCurrent.textContent = fmtTime(mainAudio.currentTime);
+  });
+
+  progressBar.addEventListener('input', () => {
+    if (!mainAudio.duration) return;
+    mainAudio.currentTime = (progressBar.value / 100) * mainAudio.duration;
+  });
+
+  mainAudio.addEventListener('ended', () => {
+    iconPlay.classList.remove('hidden');
+    iconPause.classList.add('hidden');
+    progressBar.value = 0;
+    timeCurrent.textContent = '0:00';
+    log('Playback ended.', 'info');
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     [FILE API] MEMORY CLEANUP ON PAGE UNLOAD
+     Revoke any lingering blob URL to free browser memory.
+  ─────────────────────────────────────────────────────────────── */
+  window.addEventListener('beforeunload', () => {
+    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     CANVAS VISUALISER — frequency bar chart using AnalyserNode
+  ─────────────────────────────────────────────────────────────── */
+  const vCtx = visualiser.getContext('2d');
+
+  function drawVisualiser() {
+    requestAnimationFrame(drawVisualiser);
+    if (!analyser) {
+      vCtx.clearRect(0, 0, visualiser.width, visualiser.height);
+      vCtx.fillStyle = '#161b24';
+      vCtx.fillRect(0, 0, visualiser.width, visualiser.height);
+      vCtx.strokeStyle = 'rgba(0,229,255,0.15)';
+      vCtx.lineWidth = 1;
+      vCtx.beginPath();
+      vCtx.moveTo(0, visualiser.height / 2);
+      vCtx.lineTo(visualiser.width, visualiser.height / 2);
+      vCtx.stroke();
+      return;
+    }
+
+    const bufLen = analyser.frequencyBinCount;
+    const data   = new Uint8Array(bufLen);
+    analyser.getByteFrequencyData(data);
+
+    vCtx.clearRect(0, 0, visualiser.width, visualiser.height);
+    vCtx.fillStyle = '#161b24';
+    vCtx.fillRect(0, 0, visualiser.width, visualiser.height);
+
+    const barW = (visualiser.width / bufLen) * 2.5;
+    let x = 0;
+
+    for (let i = 0; i < bufLen; i++) {
+      const barH  = (data[i] / 255) * visualiser.height;
+      const alpha = 0.4 + (data[i] / 255) * 0.6;
+      vCtx.fillStyle = `rgba(0,229,255,${alpha})`;
+      vCtx.fillRect(x, visualiser.height - barH, barW - 1, barH);
+      x += barW;
+      if (x > visualiser.width) break;
+    }
+  }
+  drawVisualiser();
+
+  /* ─────────────────────────────────────────────────────────────
+     ROUTE ALL TOGGLE
+  ─────────────────────────────────────────────────────────────── */
+  btnRouteAll.addEventListener('click', () => {
+    const toggles = deviceList.querySelectorAll('.device-toggle:not(:disabled)');
+    const anyOff  = Array.from(toggles).some(t => !t.checked);
+    toggles.forEach(toggle => {
+      if (toggle.checked !== anyOff) {
+        toggle.checked = anyOff;
+        toggle.dispatchEvent(new Event('change'));
+      }
+    });
+    btnRouteAll.textContent = anyOff ? '✕ Unroute All' : '↔ Route All';
+  });
+
+  /* ─────────────────────────────────────────────────────────────
+     BROWSER COMPAT CHECK
+  ─────────────────────────────────────────────────────────────── */
+  (function checkCompat() {
+    const testEl = new Audio();
+    if (typeof testEl.setSinkId !== 'function') {
+      compatBadge.classList.remove('hidden');
+      log('⚠ setSinkId() not supported. Per-device routing will use the default output.', 'warn');
+    } else {
+      log('setSinkId() supported. Per-device routing is available.', 'ok');
+    }
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      log('⚠ enumerateDevices() not available. Cannot list audio outputs.', 'warn');
+    }
+  })();
+
+  /* ─────────────────────────────────────────────────────────────
+     EVENT WIRING
+  ─────────────────────────────────────────────────────────────── */
+  // Sample button — loads the CORS-enabled sample URL into the URL tab
+  btnSample.addEventListener('click', () => {
+    switchTab('url');
+    urlInput.value = SAMPLE_URL;
+    loadSource(SAMPLE_URL);
+  });
+
+  btnLoad.addEventListener('click', () => loadSource(urlInput.value));
+
+  btnScan.addEventListener('click', scanDevices);
+  btnPlay.addEventListener('click', togglePlayPause);
+
+  btnClearLog.addEventListener('click', () => {
+    logConsole.innerHTML = '<div class="text-slate-600">// Log cleared.</div>';
+  });
+
+  if (navigator.mediaDevices?.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', () => {
+      log('Device change detected. Consider re-scanning.', 'info');
+    });
+  }
+
+  log('AudioRouter v2 ready. Drop a file, load a URL, then scan devices and enable routes.', 'accent');
+  </script>
+</body>
+</html>
